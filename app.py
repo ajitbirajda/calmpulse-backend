@@ -100,6 +100,9 @@ def preprocess_student_data(df):
     # The rest of your student inputs are already numerical
     return df
 
+@app.route('/')
+def home():
+    return jsonify({"message": "CalmPulse Flask backend is running successfully on Render!"})
 
 # --- API Endpoints ---
 @app.route('/signup', methods=['POST'])
