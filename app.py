@@ -16,7 +16,7 @@ app = flask.Flask(__name__)
 CORS(app)
 
 # Database Configuration (Update with your MySQL credentials)
-app.config['SQLALCHEMY_DATABASE_URI'] =postgresql://clampulsedb_user:k11oWfFOCyyhhMai9TgcKmfPgyCCDldm@dpg-d3n3s23e5dus73ejq740-a/clampulsedb
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
