@@ -9,13 +9,14 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 from datetime import datetime
+import psycopg2
 
 # Initialize Flask app and extensions
 app = flask.Flask(__name__)
 CORS(app)
 
 # Database Configuration (Update with your MySQL credentials)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///local.db'
+app.config['SQLALCHEMY_DATABASE_URI'] =postgresql://clampulsedb_user:k11oWfFOCyyhhMai9TgcKmfPgyCCDldm@dpg-d3n3s23e5dus73ejq740-a/clampulsedb
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
