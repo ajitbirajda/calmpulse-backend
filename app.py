@@ -9,19 +9,66 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 from datetime import datetime
-import psycopg2
+import pymysql # Required for SQLAlchemy to connect to MySQL
 
 # Initialize Flask app and extensions
 app = flask.Flask(__name__)
 CORS(app)
 
-# Database Configuration (Update with your MySQL credentials)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+# Database Configuration
+# Use environment variable for production, fallback to local for development
+database_uri = os.environ.get('DATABASE_URL')
+if database_uri and database_uri.startswith('mysql://'):
+    database_uri = database_uri.replace('mysql://', 'mysql+pymysql://', 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri or 'mysql+pymysql://root:Ajit%401108@localhost/calmpulse'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# --- Database Models ---
+# --- Feature Order Definitions (CRITICAL FOR PREDICTION) ---
+
+# All OHE columns seen during the employee model's fit time.
+# This list is now correctly derived from the training script's output.
+EMPLOYEE_OHE_COLS = [
+    'job_role_Data Scientist',
+    'job_role_Designer', 
+    'job_role_HR', 
+    'job_role_Marketing', 
+    'job_role_Project Manager', 
+    'job_role_Sales', 
+    'job_role_Software Engineer'
+]
+
+# Employee Feature Order: Core numerical features + Feature Engineering + OHE columns
+# This list now exactly matches the order from your model development script.
+EMPLOYEE_FEATURES_ORDER = [
+    'working_hours', 
+    'virtual_meetings', 
+    'work_life_balance', 
+    'access_to_mental_health', 
+    'satisfaction_with_remote_work', 
+    'company_support', 
+    'physical_activity', 
+    'sleep_quality', 
+    'meetings_per_hour'
+] + EMPLOYEE_OHE_COLS
+
+# Student Feature Order (Final Confirmed Order from X_train.columns.tolist())
+STUDENT_FEATURES_ORDER = [
+    'anxiety_level', 
+    'depression', 
+    'sleep_quality', 
+    'academic_performance', 
+    'study_load', 
+    'teacher_student_relationship', 
+    'future_career_concerns', 
+    'social_support', 
+    'peer_pressure', 
+    'extracurricular_activities'
+]
+
+# --- Database Models (Must match current DB schema) ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     first_name = db.Column(db.String(50), nullable=True)
@@ -61,10 +108,6 @@ class StressHistory(db.Model):
     peer_pressure = db.Column(db.Integer, nullable=True)
     extracurricular_load = db.Column(db.Integer, nullable=True)
 
-# Create the database and tables (Run this file once)
-with app.app_context():
-    db.create_all()
-
 # Load the machine learning models
 try:
     with open('employee_model.pkl', 'rb') as f:
@@ -75,36 +118,118 @@ except FileNotFoundError:
     employee_model, student_model = None, None
     print("Error: Model files not found. Check the file paths.")
 
-# --- Preprocessing Functions ---
-def preprocess_employee_data(df):
-    df = df.rename(columns={
-        'Working_Hours': 'Hours_Worked_Per_Week',
-        'Virtual_Meetings': 'Number_of_Virtual_Meetings'
-    })
-    
-    df['Access_to_Mental_Health_Resources'] = df['Access_to_Mental_Health_Resources'].replace({'Yes': 1, 'No': 0})
-    
+# --- Corrected Preprocessing Functions ---
+def preprocess_employee_data_for_prediction(df):
+    # Synchronize mappings with data_prep.py (case-sensitive)
+    access_to_mental_health_mapping = {'Yes': 1, 'No': 0}
     physical_activity_mapping = {'None': 0, 'Weekly': 1, 'Daily': 2}
     sleep_quality_mapping = {'Poor': 1, 'Average': 2, 'Good': 3}
+    satisfaction_mapping = {'Unsatisfied': 0, 'Satisfied': 1}
+
+    # Extract Job Role and drop it from the main DF
+    job_role_input = df['job_role'].iloc[0]
+
+    if pd.isna(job_role_input) or job_role_input is None or str(job_role_input).strip() == '':
+        job_role_input = 'Unknown'
     
-    df['Physical_Activity'] = df['Physical_Activity'].map(physical_activity_mapping)
-    df['Sleep_Quality'] = df['Sleep_Quality'].map(sleep_quality_mapping)
+    df = df.drop(columns=['job_role'], errors='ignore')
+
+    # Apply Categorical Mappings (Conversions)
+    df['access_to_mental_health'] = df['access_to_mental_health'].map(access_to_mental_health_mapping).fillna(0).astype(int)
+    df['physical_activity'] = df['physical_activity'].map(physical_activity_mapping).fillna(0).astype(int)
+    df['sleep_quality'] = df['sleep_quality'].map(sleep_quality_mapping).fillna(0).astype(int)
+    df['satisfaction_with_remote_work'] = df['satisfaction_with_remote_work'].map(satisfaction_mapping).fillna(0).astype(int)
     
-    df['meetings_per_hour'] = df['Number_of_Virtual_Meetings'] / df['Hours_Worked_Per_Week']
-    df['meetings_per_hour'] = df['meetings_per_hour'].replace([np.inf, -np.inf], 0)
+    # --- Outlier Handling ---
+    for col in ['working_hours', 'virtual_meetings']:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        df[col] = np.clip(df[col], lower_bound, upper_bound)
+    
+    # Feature Engineering (meetings_per_hour)
+    df['meetings_per_hour'] = df['virtual_meetings'] / df['working_hours']
+    df['meetings_per_hour'] = df['meetings_per_hour'].replace([np.inf, -np.inf, np.nan], 0)
+    
+    # --- CRITICAL FIX: One-Hot Encoding (OHE) Simulation ---
+    # 1. Create a temporary DataFrame for OHE with all possible columns set to 0
+    ohe_df = pd.DataFrame(0, index=df.index, columns=EMPLOYEE_OHE_COLS)
+    
+    # 2. Identify the correct OHE column name based on user input 
+    # The training script used `pd.get_dummies` which creates `job_role_Job Role Name`.
+    ohe_col_name = f'job_role_{str(job_role_input).replace(" ", "_")}'
+    
+    # 3. Set the specific OHE column for this prediction to 1, ONLY if it's a known column
+    if ohe_col_name in ohe_df.columns:
+        ohe_df[ohe_col_name] = 1
+    
+    # 4. Merge the main features and the OHE features
+    df = pd.concat([df, ohe_df], axis=1)
+
+    # 5. Enforce final feature order
+    df = df[EMPLOYEE_FEATURES_ORDER]
     
     return df
 
-def preprocess_student_data(df):
-    # Map Sleep Quality from 1-5 to a different scale if needed by the model
-    # For example, 1-5 scale can be used directly, so no mapping is needed here
-    # The rest of your student inputs are already numerical
+def preprocess_student_data_for_prediction(df):
+    # --- CRITICAL FIX: Implement Categorical Mappings from data_prep.py ---
+    sleep_quality_mapping = {'Poor': 1, 'Average': 2, 'Good': 3}
+    
+    # Apply mapping for the 'sleep_quality' feature, which is required as a number by the model
+    df['sleep_quality'] = df['sleep_quality'].map(sleep_quality_mapping).fillna(0).astype(int)
+    
+    # --- FIX: Rename feature to match the trained model's expectation ---
+    if 'extracurricular_load' in df.columns:
+        df.rename(columns={'extracurricular_load': 'extracurricular_activities'}, inplace=True)
+    
+    # Drop metadata columns after mapping is done
+    df = df.drop(columns=['role', 'timestamp', 'user_id'], errors='ignore') 
+    
+    # --- FINAL FIX: Enforce column order to match the trained model's fit order ---
+    df = df[STUDENT_FEATURES_ORDER]
+    
     return df
 
-@app.route('/')
-def home():
-    return jsonify({"message": "CalmPulse Flask backend is running successfully on Render!"})
+# --- CORRECTLY PLACED generate_suggestions function ---
+def generate_suggestions(stress_score, input_data, user_role):
+    suggestions = []
 
+    if user_role == 'employee':
+        if stress_score == 3:
+            suggestions.append("⚠️ High Stress Alert: It's crucial to address your stress level immediately. Consider talking to your manager about adjusting your workload or taking a mental health day. Prioritize a a relaxing evening routine to help you wind down.")
+        elif stress_score == 2:
+            suggestions.append("📈 Moderate Stress: Pay close attention to your work-life balance. Try techniques like setting clear boundaries between work and personal time. A short break or a walk during the workday can make a big difference.")
+        elif stress_score == 1:
+            suggestions.append("✅ Low Stress: You're managing your stress effectively! Keep up the good work by maintaining a healthy lifestyle, including regular exercise and proper nutrition.")
+
+        # Additional suggestions based on specific factors
+        if input_data.get('working_hours') and input_data['working_hours'] > 45:
+            suggestions.append("⏳ Long Hours: Your working hours are a major concern. Ensure you're not working through your lunch and dinner breaks. Try to disconnect from work completely after hours.")
+        if input_data.get('workload') and input_data['workload'] == 'Heavy':
+            suggestions.append("💼 Heavy Workload: Try to break down large tasks into smaller, more manageable steps. Using project management tools can help you track your progress and feel more in control.")
+        if input_data.get('sleep_quality') and input_data['sleep_quality'] == 'Poor':
+            suggestions.append("😴 Poor Sleep: Your sleep quality is a key factor. Aim for 7-9 hours of sleep per night. Avoid caffeine and screen time before bed to improve your rest.")
+    
+    elif user_role == 'student':
+        if stress_score == 2:
+            suggestions.append("🚨 High Stress: It's time to take action. Talk to your academic advisor or a university counselor to get support. Consider temporarily reducing extracurricular activities to focus on your well-being.")
+        elif stress_score == 1:
+            suggestions.append("📉 Moderate Stress: Your stress is at a manageable level. Continue to stay organized, but remember to schedule time for hobbies and social activities to avoid burnout.")
+        elif stress_score == 0:
+            suggestions.append("🎉 Low Stress: Great job balancing your academics! Continue to prioritize your health, get enough sleep, and take part in activities you enjoy.")
+
+        # Additional suggestions based on specific factors
+        if input_data.get('academic_performance') and input_data['academic_performance'] < 3:
+            suggestions.append("📚 Academic Struggles: Try new study techniques like the Pomodoro method to improve focus. Consider joining a study group or seeking help from a tutor.")
+        if input_data.get('anxiety_level') and input_data['anxiety_level'] > 15:
+            suggestions.append("😨 High Anxiety: This can significantly impact your health. Look into campus resources for mental health support, or try mindfulness and deep breathing exercises.")
+        if input_data.get('financial_stress') and input_data['financial_stress'] == 'High':
+            suggestions.append("💸 Financial Worries: Don't face this alone. Look into financial aid, scholarships, or part-time job opportunities provided by the university.")
+            
+    return suggestions
+    
 # --- API Endpoints ---
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -158,6 +283,17 @@ def save_profile():
     db.session.commit()
     return jsonify({"message": "Profile updated successfully."}), 200
 
+def safe_int_cast(value):
+    """Safely converts a value to an integer, returning 0 on failure."""
+    if value is None:
+        return 0
+    try:
+        # Tries to convert string/float/int directly
+        return int(value)
+    except (ValueError, TypeError):
+        # Catches cases like empty string "" or malformed text
+        return 0
+
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
@@ -166,24 +302,38 @@ def predict():
     if not user:
         return jsonify({"error": "User not found."}), 404
 
-    # Prepare input data for CSV and DB
+    # --- DEBUG: RAW INCOMING DATA ---
+    print("\n--- DEBUG: RAW INCOMING JSON PAYLOAD ---")
+    print(data)
+    print("---------------------------------------\n")
+    # --- END DEBUG ---
+
+    # 1. Prepare input data for CSV and DB (FIXED: Using safe_int_cast for robust input handling)
     input_data = {
         'timestamp': datetime.now().isoformat(),
         'user_id': user_id,
         'role': user.role,
-        'job_role': data.get('job_role'), 'working_hours': data.get('working_hours'),
-        'virtual_meetings': data.get('virtual_meetings'), 'work_life_balance': data.get('work_life_balance'),
-        'access_to_mental_health': data.get('access_to_mental_health'), 'satisfaction_with_remote_work': data.get('satisfaction_with_remote_work'),
-        'company_support': data.get('company_support'), 'physical_activity': data.get('physical_activity'),
+        'job_role': data.get('job_role'), 
+        'working_hours': safe_int_cast(data.get('working_hours')),
+        'virtual_meetings': safe_int_cast(data.get('virtual_meetings')),
+        'work_life_balance': safe_int_cast(data.get('work_life_balance')),
+        'access_to_mental_health': data.get('access_to_mental_health'), 
+        'satisfaction_with_remote_work': data.get('satisfaction_with_remote_work'),
+        'company_support': safe_int_cast(data.get('company_support')),
+        'physical_activity': data.get('physical_activity'),
         'sleep_quality': data.get('sleep_quality'),
-        'anxiety_level': data.get('anxiety_level'), 'depression': data.get('depression'),
-        'academic_performance': data.get('academic_performance'), 'study_load': data.get('study_load'),
-        'teacher_student_relationship': data.get('teacher_student_relationship'),
-        'future_career_concerns': data.get('future_career_concerns'), 'social_support': data.get('social_support'),
-        'peer_pressure': data.get('peer_pressure'), 'extracurricular_load': data.get('extracurricular_load')
+        'anxiety_level': safe_int_cast(data.get('anxiety_level')),
+        'depression': safe_int_cast(data.get('depression')),
+        'academic_performance': safe_int_cast(data.get('academic_performance')),
+        'study_load': safe_int_cast(data.get('study_load')),
+        'teacher_student_relationship': safe_int_cast(data.get('teacher_student_relationship')),
+        'future_career_concerns': safe_int_cast(data.get('future_career_concerns')),
+        'social_support': safe_int_cast(data.get('social_support')),
+        'peer_pressure': safe_int_cast(data.get('peer_pressure')),
+        'extracurricular_load': safe_int_cast(data.get('extracurricular_load'))
     }
 
-    # Write to CSV
+    # 2. Write to CSV
     csv_file_path = 'user_inputs.csv'
     file_exists = os.path.isfile(csv_file_path)
     with open(csv_file_path, 'a', newline='') as csvfile:
@@ -193,36 +343,55 @@ def predict():
             writer.writeheader()
         writer.writerow(input_data)
 
-    # Preprocess data for the model
+    # 3. Preprocess and Predict
     df_features = pd.DataFrame([input_data])
     model = None
-    if user.role == 'employee':
-        df_features = preprocess_employee_data(df_features)
-        if employee_model:
-            model = employee_model
-    elif user.role == 'student':
-        df_features = preprocess_student_data(df_features)
-        if student_model:
-            model = student_model
-    else:
-        return jsonify({"error": "Invalid role."}), 400
-
+    
     try:
+        if user.role == 'employee':
+            # Drop unnecessary columns first
+            df_features = df_features.drop(columns=['role', 'timestamp', 'user_id', 'anxiety_level', 'depression', 'academic_performance', 'study_load', 'teacher_student_relationship', 'future_career_concerns', 'social_support', 'peer_pressure', 'extracurricular_load'], errors='ignore')
+            # Preprocess the relevant features for the model (includes OHE simulation and final ordering)
+            df_features = preprocess_employee_data_for_prediction(df_features)
+            if employee_model:
+                model = employee_model
+        elif user.role == 'student':
+            # Corrected drop: Remove employee features and metadata, KEEP all student features including sleep_quality
+            df_features = df_features.drop(columns=[
+                'role', 'timestamp', 'user_id', 
+                'job_role', 'working_hours', 'virtual_meetings', 'work_life_balance', 
+                'access_to_mental_health', 'satisfaction_with_remote_work', 
+                'company_support', 'physical_activity' 
+            ], errors='ignore')
+            # Preprocess the relevant features for the model (maps sleep_quality and enforces ordering)
+            df_features = preprocess_student_data_for_prediction(df_features)
+            if student_model:
+                model = student_model
+        else:
+            return jsonify({"error": "Invalid role."}), 400
+
         if model is None:
             return jsonify({"error": "Model not loaded."}), 500
         
+        # Prediction
         prediction = model.predict(df_features)
         stress_score = float(prediction[0])
         
-        new_history = StressHistory(**input_data, stress_score=stress_score)
+        # 4. Save to Database
+        history_data = {key: value for key, value in input_data.items() if key not in ['role']}
+        history_data['stress_score'] = stress_score # Add the predicted score
+        new_history = StressHistory(**history_data)
+        
         db.session.add(new_history)
         db.session.commit()
         
-        suggestions = generate_suggestions(stress_score, input_data)
+        # CORRECTED FUNCTION CALL: Pass the user's role
+        suggestions = generate_suggestions(stress_score, input_data, user.role)
         
         return jsonify({"stress_score": stress_score, "suggestions": suggestions}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        print(f"Prediction Error: {e}") 
+        return jsonify({"error": f"Prediction failed due to server error: {e}"}), 400
 
 @app.route('/history/<int:user_id>', methods=['GET'])
 def get_history(user_id):
@@ -232,58 +401,10 @@ def get_history(user_id):
         "timestamp": record.timestamp.isoformat(),
         "factors": {
             "sleep_quality": record.sleep_quality,
-            "workload": record.workload if record.workload else record.study_load
+            "workload": record.working_hours if record.working_hours is not None else record.study_load
         }
     } for record in history_records]
     return jsonify(history_data)
-def generate_suggestions(stress_score, input_data):
-    suggestions = []
-    
-    # --- Overall Stress Score Based Suggestions ---
-    if stress_score >= 3.0:
-        suggestions.append("You are experiencing a high level of stress. Take a break and try some relaxation techniques.")
-    else:
-        suggestions.append("Your stress level is low. Keep up the good work and maintain a healthy lifestyle.")
-    
-    # --- Employee Specific Suggestions ---
-    if input_data.get('working_hours') is not None and input_data['working_hours'] > 45:
-        suggestions.append("Long working hours are a major contributor to stress. Try to set boundaries and take regular breaks to avoid burnout.")
-    
-    if input_data.get('virtual_meetings') is not None and input_data['virtual_meetings'] > 5:
-        suggestions.append("Too many virtual meetings can be draining. Try to consolidate meetings or suggest alternative communication methods.")
 
-    if input_data.get('work_life_balance') is not None and input_data['work_life_balance'] <= 2:
-        suggestions.append("Your work-life balance is low. Try to disconnect from work after hours and schedule time for personal activities.")
-
-    if input_data.get('physical_activity') == 'None':
-        suggestions.append("Physical activity is a great stress reliever. Try to incorporate a daily walk or some form of exercise into your routine.")
-        
-    if input_data.get('sleep_quality') in ['Poor', 1]:
-        suggestions.append("Poor sleep quality contributes to stress. Try to establish a regular sleep schedule and create a relaxing bedtime routine.")
-
-    # --- Student Specific Suggestions ---
-    if input_data.get('anxiety_level') is not None and input_data['anxiety_level'] > 15:
-        suggestions.append("Your anxiety level is high. Consider talking to a professional or using mindfulness apps to manage your thoughts.")
-    
-    if input_data.get('depression') is not None and input_data['depression'] > 15:
-        suggestions.append("Depression seems to be a significant factor. Seeking professional help from a therapist or counselor is highly recommended.")
-        
-    if input_data.get('academic_performance') is not None and input_data['academic_performance'] <= 2:
-        suggestions.append("Low academic performance can be a major stressor. Try time management and study hacks to improve your focus.")
-
-    if input_data.get('study_load') is not None and input_data['study_load'] >= 4:
-        suggestions.append("Your study load is high. Break down large tasks into smaller, more manageable ones with short breaks in between.")
-    
-    if input_data.get('peer_pressure') is not None and input_data['peer_pressure'] >= 4:
-        suggestions.append("Peer pressure may be a major stressor. Focus on your goals and don't compare yourself to others.")
-    
-    if input_data.get('social_support') is not None and input_data['social_support'] <= 2:
-        suggestions.append("Social support is key to managing stress. Try to connect with friends and family more often.")
-    
-    # --- General Resources ---
-    suggestions.append("For more tips and helpful videos, visit the Stress Management Forum page on the app.")
-    
-    return suggestions
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+# No __name__ == '__main__' block here
+# Render will use Gunicorn to run the app
