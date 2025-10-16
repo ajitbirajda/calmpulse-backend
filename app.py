@@ -18,10 +18,10 @@ CORS(app)
 # Database Configuration
 # Use environment variable for production, fallback to local for development
 database_uri = os.environ.get('DATABASE_URL')
-if database_uri and database_uri.startswith('mysql://'):
-    database_uri = database_uri.replace('mysql://', 'mysql+pymysql://', 1)
+if database_uri and database_uri.startswith('postgres://'):
+    database_uri = database_uri.replace('postgres://', 'postgresql+psycopg2://', 1)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_uri or 'mysql+pymysql://root:Ajit%401108@localhost/calmpulse'
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri or 'sqlite:///calmpulse.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
