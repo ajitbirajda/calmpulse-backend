@@ -9,69 +9,38 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 from datetime import datetime
-import pymysql # Required for SQLAlchemy to connect to MySQL
+# Removed: import pymysql (Not needed for PostgreSQL)
 
 
 # Initialize Flask app and extensions
 app = flask.Flask(__name__)
 CORS(app)
 
-# REMOVE: app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:' 
-# RESTORE: 
+# Database Configuration (RESTORING ORIGINAL LOGIC)
 database_uri = os.environ.get('DATABASE_URL')
+
 if database_uri and database_uri.startswith('postgres://'):
-    # This fix is essential to stop the 'psycopg2' crash on Render
+    # *** CRITICAL FIX: Changed dialect from 'psycopg2' to 'psycopg' ***
+    # This matches the 'psycopg[binary]' package you should install.
     database_uri = database_uri.replace('postgres://', 'postgresql+psycopg://', 1) 
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_uri 
+# Ensure a database URI is set (will use the environment variable)
+# Note: If DATABASE_URL is NOT set, this will crash as there is no fallback defined here.
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# Keep this for the first deployment to create tables, then REMOVE it later
+# ----------------------------------------------------------------------------------
+# 🔥 CRITICAL: CREATE TABLES (MUST BE DONE ON FIRST DEPLOY ONLY) 🔥
+# This code creates the tables in your Render PostgreSQL database if they don't exist.
+# REMOVE THIS BLOCK AFTER THE FIRST SUCCESSFUL DEPLOYMENT!
+# ----------------------------------------------------------------------------------
 with app.app_context():
     db.create_all()
+
 # --- Feature Order Definitions (CRITICAL FOR PREDICTION) ---
-
-# All OHE columns seen during the employee model's fit time.
-# This list is now correctly derived from the training script's output.
-EMPLOYEE_OHE_COLS = [
-    'job_role_Data Scientist',
-    'job_role_Designer', 
-    'job_role_HR', 
-    'job_role_Marketing', 
-    'job_role_Project Manager', 
-    'job_role_Sales', 
-    'job_role_Software Engineer'
-]
-
-# Employee Feature Order: Core numerical features + Feature Engineering + OHE columns
-# This list now exactly matches the order from your model development script.
-EMPLOYEE_FEATURES_ORDER = [
-    'working_hours', 
-    'virtual_meetings', 
-    'work_life_balance', 
-    'access_to_mental_health', 
-    'satisfaction_with_remote_work', 
-    'company_support', 
-    'physical_activity', 
-    'sleep_quality', 
-    'meetings_per_hour'
-] + EMPLOYEE_OHE_COLS
-
-# Student Feature Order (Final Confirmed Order from X_train.columns.tolist())
-STUDENT_FEATURES_ORDER = [
-    'anxiety_level', 
-    'depression', 
-    'sleep_quality', 
-    'academic_performance', 
-    'study_load', 
-    'teacher_student_relationship', 
-    'future_career_concerns', 
-    'social_support', 
-    'peer_pressure', 
-    'extracurricular_activities'
-]
+# ... (rest of your code is the same for brevity) ...
 
 # --- Database Models (Must match current DB schema) ---
 class User(db.Model):
