@@ -17,19 +17,16 @@ app = flask.Flask(__name__)
 CORS(app)
 
 # Database Configuration (RESTORING ORIGINAL LOGIC)
+# app.py (Configuration Section)
+
+# Database Configuration 
 database_uri = os.environ.get('DATABASE_URL')
 
-if database_uri and database_uri.startswith('postgres://'):
-    # *** CRITICAL FIX: Changed dialect from 'psycopg2' to 'psycopg' ***
-    # This matches the 'psycopg[binary]' package you should install.
-    database_uri = database_uri.replace('postgres://', 'postgresql+psycopg://', 1) 
-
-# Ensure a database URI is set (will use the environment variable)
-# Note: If DATABASE_URL is NOT set, this will crash as there is no fallback defined here.
+# Now, app.config uses the pre-fixed URL from the environment.
 app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-bcrypt = Bcrypt(app)
+# ... rest of the code
 
 # ----------------------------------------------------------------------------------
 # 🔥 CRITICAL: CREATE TABLES (MUST BE DONE ON FIRST DEPLOY ONLY) 🔥
