@@ -22,7 +22,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
-
+with app.app_context():
+    db.create_all()
 # --- Feature Order Definitions (CRITICAL FOR PREDICTION) ---
 
 # All OHE columns seen during the employee model's fit time.
