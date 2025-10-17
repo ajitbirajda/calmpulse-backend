@@ -16,18 +16,14 @@ from datetime import datetime
 app = flask.Flask(__name__)
 CORS(app)
 
-# Database Configuration (RESTORING ORIGINAL LOGIC)
-# app.py (Configuration Section)
 
-# Database Configuration 
-database_uri = os.environ.get('DATABASE_URL')
+# Database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "connect_args": {"sslmode": "require"}
+}
 
-# Now, app.config uses the pre-fixed URL from the environment.
-app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-# ... rest of the code
-
 # ----------------------------------------------------------------------------------
 # 🔥 CRITICAL: CREATE TABLES (MUST BE DONE ON FIRST DEPLOY ONLY) 🔥
 # This code creates the tables in your Render PostgreSQL database if they don't exist.
