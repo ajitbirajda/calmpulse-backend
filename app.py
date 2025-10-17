@@ -16,13 +16,9 @@ import psycopg2
 app = flask.Flask(__name__)
 CORS(app)
 
-# Database Configuration
-# Use environment variable for production, fallback to local for development
-database_uri = os.environ.get('DATABASE_URL')
-if database_uri and database_uri.startswith('postgres://'):
-    database_uri = database_uri.replace('postgres://', 'postgresql+psycopg2://', 1)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = database_uri or 'sqlite:///calmpulse.db'
+# TEMPORARY FIX: Force the app to start with a dummy in-memory SQLite DB
+# This checks if the rest of your code works.
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:' 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
