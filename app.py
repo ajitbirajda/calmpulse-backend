@@ -16,12 +16,19 @@ import pymysql # Required for SQLAlchemy to connect to MySQL
 app = flask.Flask(__name__)
 CORS(app)
 
-# TEMPORARY FIX: Force the app to start with a dummy in-memory SQLite DB
-# This checks if the rest of your code works.
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:' 
+# REMOVE: app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:' 
+# RESTORE: 
+database_uri = os.environ.get('DATABASE_URL')
+if database_uri and database_uri.startswith('postgres://'):
+    # This fix is essential to stop the 'psycopg2' crash on Render
+    database_uri = database_uri.replace('postgres://', 'postgresql+psycopg://', 1) 
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
+
+# Keep this for the first deployment to create tables, then REMOVE it later
 with app.app_context():
     db.create_all()
 # --- Feature Order Definitions (CRITICAL FOR PREDICTION) ---
