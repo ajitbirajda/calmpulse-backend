@@ -10,6 +10,7 @@ from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 from datetime import datetime
 import pymysql # Required for SQLAlchemy to connect to MySQL
+import psycopg2
 
 # Initialize Flask app and extensions
 app = flask.Flask(__name__)
