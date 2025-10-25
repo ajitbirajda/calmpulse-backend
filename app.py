@@ -17,18 +17,18 @@ app = flask.Flask(__name__)
 CORS(app)
 
 
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+database_url = os.getenv("DATABASE_URL")
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "connect_args": {"sslmode": "require"}
 }
 
 db = SQLAlchemy(app)
-# ----------------------------------------------------------------------------------
-# 🔥 CRITICAL: CREATE TABLES (MUST BE DONE ON FIRST DEPLOY ONLY) 🔥
-# This code creates the tables in your Render PostgreSQL database if they don't exist.
-# REMOVE THIS BLOCK AFTER THE FIRST SUCCESSFUL DEPLOYMENT!
-# ----------------------------------------------------------------------------------
+
+# Table Creation on First Deploy Only
 with app.app_context():
     db.create_all()
 
